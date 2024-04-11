@@ -4,3 +4,7 @@ __pycache__
 
 datasets/
 work_dirs/
+convgan/datasets/
+convgan/work_dirs/
+convvae/datasets/
+convvae/work_dirs/

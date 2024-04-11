@@ -39,7 +39,7 @@ def train(
             b, c, h, w = real_images.shape
             real_targets = torch.ones(b).to(device)
             fake_targets = torch.zeros(b).to(device)
-            fake_input: Tensor = torch.randn(b, generator.hidden_channels, h//16, w//16).to(device)
+            fake_input: Tensor = torch.randn(b, c, h, w).to(device)
 
             # train generator
             g_optimizer.zero_grad()

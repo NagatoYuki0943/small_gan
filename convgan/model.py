@@ -120,19 +120,63 @@ class ResidualBlock(nn.Module):
 
 
 class Generator(nn.Module):
-    """上采样16倍的模型
+    """use unet, downsample 8 strides
     """
     def __init__(
         self,
+        input_shape: list[int] = [3, 32, 32],
         hidden_channels: int = 64,
-        out_channels: int = 3,
         n_residual_blocks: int = 1,
     ) -> None:
         super().__init__()
         self.hidden_channels = hidden_channels
+        self.input_shape = input_shape  # C x H x W
 
-        self.stage1 = nn.Sequential(
-                TransposeConvNormAct(
+        self.stage1 = ConvNormAct(in_channels=input_shape[0], out_channels=hidden_channels//8, kernel_size=3, stride=1, padding=1, norm=nn.InstanceNorm2d)
+
+        # 下采样
+        self.stage2 = nn.Sequential(
+                ConvNormAct(
+                in_channels=hidden_channels//8,
+                out_channels=hidden_channels//4,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                norm=nn.InstanceNorm2d
+            ),
+            *[ResidualBlock(in_channels=hidden_channels//4, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
+        )
+        self.stage3 = nn.Sequential(
+                ConvNormAct(
+                in_channels=hidden_channels//4,
+                out_channels=hidden_channels//2,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                norm=nn.InstanceNorm2d
+            ),
+            *[ResidualBlock(in_channels=hidden_channels//2, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
+        )
+        self.stage4 = nn.Sequential(
+                ConvNormAct(
+                in_channels=hidden_channels//2,
+                out_channels=hidden_channels,
+                kernel_size=3,
+                stride=2,
+                padding=1,
+                norm=nn.InstanceNorm2d
+            ),
+            *[ResidualBlock(in_channels=hidden_channels, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
+        )
+
+        # middle
+        self.stage5 = nn.Sequential(
+            *[ResidualBlock(in_channels=hidden_channels, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks * 6)],
+        )
+
+        # 上采样
+        self.stage6 = nn.Sequential(
+            TransposeConvNormAct(
                 in_channels=hidden_channels,
                 out_channels=hidden_channels//2,
                 kernel_size=4,
@@ -140,10 +184,9 @@ class Generator(nn.Module):
                 padding=1,
                 norm=nn.InstanceNorm2d
             ),
-            *[ResidualBlock(in_channels=hidden_channels//2, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
+            *[ResidualBlock(hidden_channels//2, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
         )
-
-        self.stage2 = nn.Sequential(
+        self.stage7 = nn.Sequential(
             TransposeConvNormAct(
                 in_channels=hidden_channels//2,
                 out_channels=hidden_channels//4,
@@ -154,8 +197,7 @@ class Generator(nn.Module):
             ),
             *[ResidualBlock(hidden_channels//4, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
         )
-
-        self.stage3 = nn.Sequential(
+        self.stage8 = nn.Sequential(
             TransposeConvNormAct(
                 in_channels=hidden_channels//4,
                 out_channels=hidden_channels//8,
@@ -167,35 +209,36 @@ class Generator(nn.Module):
             *[ResidualBlock(hidden_channels//8, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
         )
 
-        self.stage4 = nn.Sequential(
-            TransposeConvNormAct(
-                in_channels=hidden_channels//8,
-                out_channels=hidden_channels//16,
-                kernel_size=4,
-                stride=2,
-                padding=1,
-                norm=nn.InstanceNorm2d
-            ),
-            *[ResidualBlock(hidden_channels//16, norm=nn.InstanceNorm2d) for _ in range(n_residual_blocks)],
-        )
-
-        self.stage5 = nn.Conv2d(hidden_channels//16, out_channels, 1)
+        self.stage9 = nn.Conv2d(hidden_channels//8, input_shape[0], 1)
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.stage1(x)
-        x = self.stage2(x)
-        x = self.stage3(x)
-        x = self.stage4(x)
-        x = self.stage5(x)
+        x = self.stage1(x)          # [2, 3, 32, 32] -> [2, 8, 32, 32]
+
+        # 下采样
+        x = self.stage2(x)          # [2, 8, 32, 32] -> [2, 16, 16, 16]
+        stage2 = x
+        x = self.stage3(x)          # [2, 16, 16, 16] -> [2, 32, 8, 8]
+        stage3 = x
+        x = self.stage4(x)          # [2, 32, 8, 8] -> [2, 64, 4, 4]
+        stage4 = x
+
+        # middle
+        x = self.stage5(x)          # [2, 64, 4, 4] -> [2, 64, 4, 4]
+
+        # 上采样
+        x = self.stage6(stage4 + x) # ([2, 64, 4, 4] + [2, 64, 4, 4]) -> [2, 32, 8, 8]
+        x = self.stage7(stage3 + x) # ([2, 32, 8, 8] + [2, 32, 8, 8]) -> [2, 16, 16, 16]
+        x = self.stage8(stage2 + x) # ([2, 16, 16, 16] + [2, 16, 16, 16]) -> [2, 8, 32, 32]
+
+        x = self.stage9(x)          # [2, 8, 32, 32] -> [2, 3, 32, 32]
         x = F.tanh(x)
         return x
 
 
 def test_generater():
-    x = torch.randn(2, 256, 7, 7)
-    model = Generator(256, 1).eval()
+    x = torch.randn(2, 3, 32, 32)
+    model = Generator().eval()
 
-    model.load_state_dict(torch.load('work_dirs/20240315-090721-mnist/latest_generator.pth'))
     with torch.inference_mode():
         print(model(x).shape)
 
@@ -204,14 +247,15 @@ class Discriminator(nn.Module):
     """下采样16倍的模型"""
     def __init__(
         self,
-        in_channels: int = 3,
+        input_shape: list[int] = [3, 32, 32],
         hidden_channels: int = 64,
         n_residual_blocks: int = 1,
     ) -> None:
         super().__init__()
+        self.input_shape = input_shape  # C x H x W
 
         self.stage1 = nn.Sequential(
-            ConvNormAct(in_channels, hidden_channels//8, kernel_size=3, stride=2, padding=1, norm=nn.InstanceNorm2d, act=nn.LeakyReLU),
+            ConvNormAct(input_shape[0], hidden_channels//8, kernel_size=3, stride=2, padding=1, norm=nn.InstanceNorm2d, act=nn.LeakyReLU),
             *[ResidualBlock(hidden_channels//8, norm=nn.InstanceNorm2d, act=nn.LeakyReLU) for i in range(n_residual_blocks)],
         )
 

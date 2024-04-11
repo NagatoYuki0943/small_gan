@@ -5,7 +5,7 @@ import time
 
 from model import Generator, Discriminator
 from dataset import get_mnist, get_cifar
-from utils import remove_files, save_file
+from utils import save_file
 from utils_train import train
 
 
@@ -16,18 +16,17 @@ batch_size = 128
 epochs = 100
 g_optimizer_lr = 0.001 # 0.0002
 d_optimizer_lr = 0.001 # 0.0002
-save_dir = Path(f"work_dirs/{time.strftime('%Y%m%d-%H%M%S', time.localtime())}-cifar")
+save_dir = Path(f"work_dirs/{time.strftime('%Y%m%d-%H%M%S', time.localtime())}-mnist")
 
-image_channels = 3
+input_shape = [1, 32, 32]
 hidden_channels = 64
-
 
 # save train script
 save_file(Path(__file__), save_dir)
 
 # model
-generator = Generator(out_channels=image_channels, hidden_channels=hidden_channels).to(device)
-discriminator = Discriminator(in_channels=image_channels, hidden_channels=hidden_channels).to(device)
+generator = Generator(input_shape=input_shape, hidden_channels=hidden_channels, n_residual_blocks=1).to(device)
+discriminator = Discriminator(input_shape=input_shape, hidden_channels=hidden_channels).to(device)
 
 # optimizer
 # g_optimizer = optim.SGD(generator.parameters(), lr=g_optimizer_lr, momentum=0.937, weight_decay=5e-4)
